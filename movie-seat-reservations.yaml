@@ -1,0 +1,266 @@
+openapi: 3.0.3
+info:
+  title: Movie Theater Seat Reservation API
+  version: 1.0.0
+  description: >-
+    This service supports seat selection during an online movie ticket purchase.
+    Customers view seat availability for a showtime before requesting a temporary
+    reservation. A successful reservation holds every requested seat for ten
+    minutes and returns its expiration time and total price. Customers can
+    cancel their reservations before payment. Successful payment confirms a
+    reservation through a separate payment service. The theater website
+    establishes the customer session before reservation changes.
+servers:
+  - url: https://api.movietheater.example.com/v1
+    description: Example server for this API design
+tags:
+  - name: Seat reservations
+    description: Seat availability and temporary reservation operations
+paths:
+  /showtimes/{showtimeId}/seats:
+    get:
+      tags: [Seat reservations]
+      summary: Get seat availability for a showtime
+      operationId: getSeatAvailability
+      description: >-
+        Returns the seats and ticket prices for the specified showtime.
+        Held or sold seats are unavailable. Availability can change after
+        this response. Only a successful reservation holds selected seats.
+      parameters:
+        - name: showtimeId
+          in: path
+          required: true
+          description: Identifier of the selected showtime.
+          schema:
+            $ref: '#/components/schemas/ShowtimeId'
+      responses:
+        '200':
+          description: Seat availability was retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatAvailability'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reservations:
+    post:
+      tags: [Seat reservations]
+      summary: Create a temporary seat reservation
+      operationId: createReservation
+      description: >-
+        Holds one through eight unique seats for ten minutes and associates
+        the reservation with the current customer session. Every requested
+        seat must belong to the specified showtime. The server calculates
+        the total price. If any requested seat is unavailable, the server
+        returns 409 and creates no reservation.
+      security:
+        - CustomerSession: []
+      requestBody:
+        required: true
+        description: The selected showtime and seat identifiers.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+      responses:
+        '201':
+          description: All requested seats were reserved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A requested seat is unavailable. No reservation was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /reservations/{reservationId}:
+    delete:
+      tags: [Seat reservations]
+      summary: Cancel an unpaid seat reservation
+      operationId: cancelReservation
+      description: >-
+        Cancels a reservation owned by the current customer session and
+        releases its seats. The reservation must still be held and unexpired.
+        Repeating this request for an already canceled reservation returns
+        204. Confirmed or expired reservations return 409. A reservation
+        owned by another session returns 404.
+      security:
+        - CustomerSession: []
+      parameters:
+        - name: reservationId
+          in: path
+          required: true
+          description: Identifier returned when the reservation was created.
+          schema:
+            type: string
+            format: uuid
+            example: 7fa2f768-3e18-4d65-bc29-97b5f0c40a61
+      responses:
+        '204':
+          description: The reservation is canceled. The response has no body.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A confirmed or expired reservation cannot be canceled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    CustomerSession:
+      type: apiKey
+      in: cookie
+      name: sessionId
+      description: >-
+        A valid customer session issued by the theater website.
+        Reservations belong to the session that created them.
+  responses:
+    BadRequest:
+      description: A parameter or request body value is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: The customer session cookie is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The resource was not found or does not belong to this session.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ShowtimeId:
+      type: string
+      pattern: '^show_[1-9][0-9]*$'
+      example: show_104
+    SeatIds:
+      type: array
+      minItems: 1
+      maxItems: 8
+      uniqueItems: true
+      items:
+        type: string
+        pattern: '^[A-Z]+[1-9][0-9]*$'
+      example: [A10, A11]
+    SeatAvailability:
+      type: object
+      additionalProperties: false
+      required: [showtimeId, currency, seats]
+      properties:
+        showtimeId:
+          $ref: '#/components/schemas/ShowtimeId'
+        currency:
+          type: string
+          enum: [USD]
+        seats:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [seatId, label, status, price]
+            properties:
+              seatId:
+                type: string
+                pattern: '^[A-Z]+[1-9][0-9]*$'
+              label:
+                type: string
+                minLength: 1
+              status:
+                type: string
+                enum: [available, unavailable]
+              price:
+                type: number
+                minimum: 0
+                multipleOf: 0.01
+                description: Ticket price in the response currency.
+      example:
+        showtimeId: show_104
+        currency: USD
+        seats:
+          - seatId: A10
+            label: Row A, Seat 10
+            status: available
+            price: 12.50
+          - seatId: A11
+            label: Row A, Seat 11
+            status: available
+            price: 12.50
+    CreateReservationRequest:
+      type: object
+      additionalProperties: false
+      required: [showtimeId, seatIds]
+      properties:
+        showtimeId:
+          $ref: '#/components/schemas/ShowtimeId'
+        seatIds:
+          $ref: '#/components/schemas/SeatIds'
+    Reservation:
+      type: object
+      additionalProperties: false
+      required:
+        - reservationId
+        - showtimeId
+        - seatIds
+        - status
+        - expiresAt
+        - totalPrice
+        - currency
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+          example: 7fa2f768-3e18-4d65-bc29-97b5f0c40a61
+        showtimeId:
+          $ref: '#/components/schemas/ShowtimeId'
+        seatIds:
+          $ref: '#/components/schemas/SeatIds'
+        status:
+          type: string
+          enum: [held]
+        expiresAt:
+          type: string
+          format: date-time
+          description: UTC expiration time, ten minutes after creation.
+          example: '2026-11-01T19:10:00Z'
+        totalPrice:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+          description: Total ticket price for all reserved seats in USD.
+          example: 25.00
+        currency:
+          type: string
+          enum: [USD]
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: Error identifier intended for client handling.
+        message:
+          type: string
+          minLength: 1
+          description: Explanation of the request failure.
